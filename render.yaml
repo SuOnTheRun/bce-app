@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: bce-app
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PASS_A_MODEL
+        value: gpt-4o-2024-08-06
+      - key: PASS_B_MODEL
+        value: gpt-5
