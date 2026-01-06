@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Behavioral Context Engine</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="top">
+      <div>
+        <div class="title">Behavioral Context Engine</div>
+        <div class="subtitle">Strategy-owned. One-page briefs. Decision-grade clarity.</div>
+      </div>
+      <div class="actions">
+        <a class="link" href="/template">Download Excel Template</a>
+      </div>
+    </header>
+
+    {% if error %}
+      <div class="card error">
+        <div class="cardTitle">Error</div>
+        <div class="mono">{{ error }}</div>
+      </div>
+    {% endif %}
+
+    <div class="grid">
+      <section class="card">
+        <div class="cardTitle">Inputs</div>
+        <div class="cardSub">Upload Excel, or fill manually. Keep it debranded.</div>
+
+        <form action="/generate" method="post" enctype="multipart/form-data" class="form">
+          <label class="label">Excel (optional)</label>
+          <input class="input" type="file" name="excel" accept=".xlsx" />
+
+          <div class="divider"></div>
+
+          <label class="label">Category *</label>
+          <input class="input" type="text" name="category" placeholder="Retail" />
+
+          <label class="label">Objective *</label>
+          <input class="input" type="text" name="objective" placeholder="Drive in-store footfall during promo window" />
+
+          <label class="label">Channels *</label>
+          <input class="input" type="text" name="channels" placeholder="DOOH, Display" />
+
+          <label class="label">Market *</label>
+          <input class="input" type="text" name="market" placeholder="US - NYC" />
+
+          <label class="label">Audience Logic *</label>
+          <textarea class="input textarea" name="audience_logic" placeholder="Plain English. No targeting jargon."></textarea>
+
+          <label class="label">Creative Notes</label>
+          <textarea class="input textarea" name="creative_notes" placeholder="What it said, what it looked like. No brand names."></textarea>
+
+          <label class="label">Measurement Type</label>
+          <input class="input" type="text" name="measurement_type" placeholder="Footfall / BLS / Brand Lift" />
+
+          <label class="label">Key Result</label>
+          <input class="input" type="text" name="key_result" placeholder="Directional uplift observed / +X% uplift" />
+
+          <label class="label">POI / Journey Context</label>
+          <input class="input" type="text" name="poi_context" placeholder="Retail parks, transit-adjacent retail, high street..." />
+
+          <label class="label">Notes</label>
+          <textarea class="input textarea" name="notes" placeholder="Seasonality, promos, constraints, anomalies."></textarea>
+
+          <button class="btn" type="submit">Generate Brief</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <div class="cardTitle">Output</div>
+        <div class="cardSub">Behavioral Context Brief (BCB)</div>
+
+        {% if output %}
+          <div class="outputBlock">
+            <pre class="brief">{{ output.brief }}</pre>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="meta">
+            <div class="metaRow">
+              <div class="metaKey">Confidence</div>
+              <div class="metaVal mono">{{ output.confidence.level }}</div>
+            </div>
+            <div class="metaRow">
+              <div class="metaKey">Drivers</div>
+              <div class="metaVal mono">{{ output.confidence.drivers }}</div>
+            </div>
+            <div class="metaRow">
+              <div class="metaKey">Limitations</div>
+              <div class="metaVal mono">{{ output.confidence.limitations }}</div>
+            </div>
+          </div>
+
+          <details class="details">
+            <summary>Show Decision Map JSON (internal)</summary>
+            <pre class="mono small">{{ output.decision_map_json }}</pre>
+          </details>
+
+          <details class="details">
+            <summary>Show input used</summary>
+            <pre class="mono small">{{ input_used }}</pre>
+          </details>
+
+        {% else %}
+          <div class="empty">Generate a brief to see output here.</div>
+        {% endif %}
+      </section>
+    </div>
+
+    <footer class="footer">
+      <div class="muted">Strategy-grade briefing. Minimal UI. Maximum clarity.</div>
+    </footer>
+  </div>
+</body>
+</html>
