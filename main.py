@@ -4,7 +4,15 @@ from app.web import router as web_router
 
 app = FastAPI(title="Behavioral Context Engine", version="1.0")
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+
+app.mount(
+    "/static",
+    StaticFiles(directory=str(BASE_DIR / "static")),
+    name="static",
+)
 app.include_router(web_router)
 
 @app.get("/health")
