@@ -1,317 +1,349 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Behavioral Context Engine</title>
-  <link rel="stylesheet" href="/static/styles.css" />
-</head>
-<body>
-  <div class="appShell">
+import os
+import json
+from pathlib import Path
+from typing import Tuple
 
-    <!-- Top Bar -->
-    <header class="topBar">
-      <div class="brand">
-        <div class="brandTitle">Behavioral Context Engine</div>
-        <div class="brandSub">Strategy-owned. One-page briefs. Decision-grade clarity.</div>
-      </div>
+from fastapi import APIRouter, Request, UploadFile, File, Form
+from fastapi.responses import HTMLResponse, Response, RedirectResponse
+from fastapi.templating import Jinja2Templates
 
-      <div class="topActions">
-        <a class="btnGhost" href="/template">Download Excel Template</a>
+from app.models import DecisionMap
+from app.excel import generate_template_xlsx, parse_template_xlsx
+from app.llm_router import generate_structured, generate_text, provider
+from app.prompts import (
+    PASS_A_SYSTEM, PASS_A_USER_TEMPLATE,
+    PASS_B_SYSTEM, PASS_B_USER_TEMPLATE
+)
 
-        {% if output and output.provider %}
-          <div class="badge">
-            <span class="dot"></span>
-            <span class="badgeText">Provider: {{ output.provider }}</span>
-          </div>
-        {% endif %}
-      </div>
-    </header>
+router = APIRouter()
 
-    <!-- Layout -->
-    <main class="layout">
-      <!-- LEFT: Decision Setup -->
-      <aside class="panel panelLeft">
-        <div class="panelHeader">
-          <div class="panelTitle">Decision Setup</div>
-          <div class="panelHint">Inputs are supporting evidence. The decision is the output.</div>
-        </div>
+BASE_DIR = Path(__file__).resolve().parent.parent
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-        {% if error %}
-          <div class="alert alertError">
-            <div class="alertTitle">Error</div>
-            <div class="alertBody mono">{{ error }}</div>
-          </div>
-        {% endif %}
 
-        <form action="/generate" method="post" enctype="multipart/form-data" class="form">
+# -----------------------------
+# Helpers
+# -----------------------------
+def _required(value: str, name: str) -> str:
+    v = (value or "").strip()
+    if not v:
+        raise ValueError(f"Missing required field: {name}")
+    return v
 
-          <!-- Campaign Frame -->
-          <section class="card">
-            <div class="cardTop">
-              <div class="cardTitle">Campaign frame</div>
-              <div class="cardSub">Keep it debranded. Short, specific.</div>
-            </div>
 
-            <div class="grid2">
-              <div>
-                <label class="label">Category *</label>
-                <input class="input" type="text" name="category" placeholder="Retail" value="{{ (input_used.campaign.Category if input_used) or '' }}" />
-              </div>
+def _friendly_error(e: Exception) -> str:
+    msg = str(e)
+    if "insufficient_quota" in msg or "You exceeded your current quota" in msg:
+        return (
+            "LLM quota is not available for the current API key.\n\n"
+            "No-pay workaround:\n"
+            "- Set LLM_PROVIDER=offline in Render.\n"
+            "- Or switch provider to a free/approved internal option.\n"
+        )
+    if "OPENAI_API_KEY is not set" in msg or "GEMINI_API_KEY is not set" in msg:
+        return (
+            "API key missing.\n\n"
+            "No-pay workaround:\n"
+            "- Set LLM_PROVIDER=offline in Render.\n"
+        )
+    return msg
 
-              <div>
-                <label class="label">Market *</label>
-                <input class="input" type="text" name="market" placeholder="US – NYC" value="{{ (input_used.campaign.Market if input_used) or '' }}" />
-              </div>
 
-              <div class="span2">
-                <label class="label">Objective *</label>
-                <input class="input" type="text" name="objective" placeholder="Drive incremental in-store footfall during promo window"
-                       value="{{ (input_used.campaign.Objective if input_used) or '' }}" />
-              </div>
-            </div>
-          </section>
+def _group_signals(dm: dict) -> dict:
+    observed, inferred, hypothesis = [], [], []
+    for s in dm.get("observable_signals", []) or []:
+        txt = (s.get("signal") or "").strip()
+        cls = (s.get("classification") or "").strip().lower()
+        if not txt:
+            continue
+        if cls == "observed":
+            observed.append(txt)
+        elif cls == "hypothesis":
+            hypothesis.append(txt)
+        else:
+            inferred.append(txt)
+    return {"observed": observed, "inferred": inferred, "hypothesis": hypothesis}
 
-          <!-- Behavioral Assumptions (Hero Input) -->
-          <section class="card heroCard">
-            <div class="cardTop">
-              <div class="cardTitle">Behavioral context *</div>
-              <div class="cardSub">Plain English. Describe the decision moment and why it’s unstable.</div>
-            </div>
 
-            <textarea class="input textarea heroTextarea" name="audience_logic"
-              placeholder="Example: People passing retail locations during routine travel, where detour cost is low and urgency can justify a stop.">{{ (input_used.campaign.Audience_Logic if input_used) or '' }}</textarea>
+def _derive_headline(dm: dict) -> Tuple[str, str]:
+    decision = (dm.get("decision_being_influenced") or "").strip()
+    tension = (dm.get("behavioral_tension", {}) or {}).get("tradeoff", "")
+    why = (dm.get("behavioral_tension", {}) or {}).get("why_this_tension_exists", "")
 
-            <div class="microHint">
-              What we’re looking for: <span class="mono">moment + route + tension</span>
-            </div>
-          </section>
+    headline = decision if decision else "A decision becomes influenceable when friction collapses and justification becomes credible."
+    sub = []
+    if dm.get("decision_type"):
+        sub.append(f"Decision type: {dm.get('decision_type')}.")
+    if dm.get("primary_tension"):
+        sub.append(f"Tension: {dm.get('primary_tension')}.")
+    if dm.get("decision_window"):
+        sub.append(f"Window: {dm.get('decision_window')}.")
+    if tension:
+        sub.append(f"Tradeoff: {tension}.")
+    if why:
+        sub.append(why)
+    return headline, " ".join(sub).strip()
 
-          <!-- Evidence (Collapsible) -->
-          <details class="accordion">
-            <summary class="accordionSummary">
-              <span>Add supporting evidence</span>
-              <span class="accordionHint">Channels, measurement, creative, notes, upload</span>
-            </summary>
 
-            <section class="card">
-              <div class="grid2">
-                <div class="span2">
-                  <label class="label">Excel upload (optional)</label>
-                  <input class="input" type="file" name="excel" accept=".xlsx" />
-                </div>
+def _derive_why_this_works(dm: dict) -> list[str]:
+    # Prefer strategic levers if present; otherwise craft differentiated bullets.
+    levers = dm.get("strategic_levers") or []
+    bullets = [x.strip() for x in levers if isinstance(x, str) and x.strip()]
 
-                <div class="span2">
-                  <label class="label">Channels *</label>
-                  <input class="input" type="text" name="channels" placeholder="DOOH, Display"
-                         value="{{ (input_used.campaign.Channels if input_used) or '' }}" />
-                </div>
+    if len(bullets) >= 3:
+        return bullets[:3]
 
-                <div>
-                  <label class="label">Flight dates</label>
-                  <input class="input" type="text" name="flight_dates" placeholder="2025-10-01 to 2025-10-21"
-                         value="{{ (input_used.campaign.Flight_Dates if input_used) or '' }}" />
-                </div>
+    # Fallback bullets depend on discriminators (this helps differentiation even in offline/provider-limited mode)
+    dt = (dm.get("decision_type") or "").lower()
+    pt = (dm.get("primary_tension") or "").lower()
+    dw = (dm.get("decision_window") or "").lower()
 
-                <div>
-                  <label class="label">Measurement type</label>
-                  <input class="input" type="text" name="measurement_type" placeholder="Footfall / BLS / Brand Lift"
-                         value="{{ (input_used.campaign.Measurement_Type if input_used) or '' }}" />
-                </div>
+    fallback = []
+    if "habit" in dt:
+        fallback.append("This works when cues repeat at the same weekly rhythm and reduce choice effort into a default.")
+    if "impulse" in dt:
+        fallback.append("This works when the message is simple enough to be processed fast and feels like a low-cost win now.")
+    if "risk" in dt:
+        fallback.append("This works when the downside is reduced through reassurance, proof, and clear next steps.")
+    if "planned" in dt:
+        fallback.append("This works when the audience is supported through evaluation, not rushed into action.")
+    if "identity" in dt:
+        fallback.append("This works when the offer feels like self-expression and has social permission to spend.")
+    if "loss" in dt:
+        fallback.append("This works when urgency is framed as avoiding loss, not chasing a benefit.")
+    if "convenience" in dt:
+        fallback.append("This works when friction is removed and the ‘easy path’ is made obvious.")
 
-                <div class="span2">
-                  <label class="label">Creative notes</label>
-                  <textarea class="input textarea" name="creative_notes"
-                    placeholder="What it said, what it looked like. No brand names.">{{ (input_used.campaign.Creative_Notes if input_used) or '' }}</textarea>
-                </div>
+    # tension cues
+    if "time vs value" in pt:
+        fallback.append("The creative must justify time spent with immediate value and near-zero hassle.")
+    if "certainty vs opportunity" in pt:
+        fallback.append("The message must increase certainty (proof, clarity) while keeping the upside simple.")
+    if "identity vs price" in pt:
+        fallback.append("The offer must feel worth it even if not the cheapest, because it signals taste or status.")
+    if "effort vs reward" in pt:
+        fallback.append("The action must feel effortless relative to the payoff; otherwise drop-off is guaranteed.")
 
-                <div class="span2">
-                  <label class="label">POI / journey context</label>
-                  <input class="input" type="text" name="poi_context"
-                         placeholder="Transit exits, commuter corridors, retail frontage, last-mile walk zones..."
-                         value="{{ (input_used.campaign.POI_Context if input_used) or '' }}" />
-                </div>
+    # window cue
+    if "in-motion" in dw:
+        fallback.append("In-motion moments require short, high-contrast messaging and route-adjacent placements.")
+    if "reflective" in dw:
+        fallback.append("Reflective moments require reassurance and structure, not urgency.")
+    if "pre-planned" in dw:
+        fallback.append("Pre-planned moments require reminders and planning cues rather than surprise.")
+    if "at-threshold" in dw:
+        fallback.append("At-threshold moments require immediate relevance and unmistakable ‘go-now’ justification.")
 
-                <div class="span2">
-                  <label class="label">Key result</label>
-                  <input class="input" type="text" name="key_result"
-                         placeholder="Directional uplift observed / +X% uplift"
-                         value="{{ (input_used.campaign.Key_Result if input_used) or '' }}" />
-                </div>
+    # dedupe + cap at 3
+    seen, out = set(), []
+    for b in fallback:
+        if b not in seen:
+            out.append(b)
+            seen.add(b)
+    return out[:3] if out else ["The brief is strongest when the moment, tension, and decision window are explicitly defined."]
 
-                <div class="span2">
-                  <label class="label">Notes</label>
-                  <textarea class="input textarea" name="notes"
-                    placeholder="Seasonality, anomalies, constraints, competitor events.">{{ (input_used.campaign.Notes if input_used) or '' }}</textarea>
-                </div>
-              </div>
-            </section>
-          </details>
 
-          <button class="btnPrimary" type="submit">Generate Brief</button>
+def _infer_discriminators(campaign: dict) -> Tuple[str, str, str]:
+    """
+    If user doesn't supply decision_type / primary_tension / decision_window,
+    infer a reasonable default so the engine still diverges.
+    """
+    cat = (campaign.get("Category") or "").lower()
+    obj = (campaign.get("Objective") or "").lower()
+    ch = (campaign.get("Channels") or "").lower()
 
-          <div class="tinyMeta">
-            {% if output and output.models %}
-              <span class="mono muted">Models: A={{ output.models.pass_a }}, B={{ output.models.pass_b }}</span>
-            {% endif %}
-          </div>
-        </form>
-      </aside>
+    # Decision Window
+    if "dooh" in ch:
+        window = "At-threshold"
+    elif "ctv" in ch:
+        window = "Reflective"
+    else:
+        window = "Pre-planned"
 
-      <!-- RIGHT: Decision Brief -->
-      <section class="panel panelRight">
-        <div class="panelHeader">
-          <div>
-            <div class="panelTitle">Behavioral Context Brief</div>
-            <div class="panelHint">Designed to be scanned in under 10 seconds.</div>
-          </div>
-        </div>
+    # Decision Type
+    if any(x in obj for x in ["test drive", "dealership", "consider", "compare", "apply", "sign up"]):
+        decision_type = "Planned consideration"
+    elif any(x in obj for x in ["reduce risk", "trust", "reassure"]):
+        decision_type = "Risk mitigation"
+    elif any(x in obj for x in ["footfall", "visit", "store", "walk-in", "lunch"]):
+        decision_type = "Impulse capture"
+    elif any(x in obj for x in ["repeat", "frequency", "weekly", "habit", "subscription"]):
+        decision_type = "Habit reinforcement"
+    elif "beauty" in cat or "luxury" in cat:
+        decision_type = "Identity signaling"
+    else:
+        decision_type = "Convenience optimization"
 
-        {% if output and output.dm %}
-          <!-- 1) Decision Headline -->
-          <section class="briefCard briefHero">
-            <div class="kicker">Executive decision headline</div>
-            <div class="headline">
-              {{ output.headline }}
-            </div>
-            <div class="subline">
-              {{ output.subhead }}
-            </div>
-          </section>
+    # Primary Tension
+    if decision_type in ["Impulse capture", "Convenience optimization"]:
+        tension = "Time vs Value"
+    elif decision_type in ["Planned consideration", "Risk mitigation"]:
+        tension = "Certainty vs Opportunity"
+    elif decision_type == "Identity signaling":
+        tension = "Identity vs Price"
+    else:
+        tension = "Effort vs Reward"
 
-          <!-- 2) Why This Works -->
-          <section class="briefCard">
-            <div class="sectionTitle">Why this works</div>
-            <ul class="bullets">
-              {% for b in output.why_this_works %}
-                <li>{{ b }}</li>
-              {% endfor %}
-            </ul>
-          </section>
+    return decision_type, tension, window
 
-          <!-- 3) Moment of Influence -->
-          <section class="briefCard">
-            <div class="sectionTitle">Moment of influence</div>
-            <div class="momentGrid">
-              <div class="momentRow">
-                <div class="momentKey">WHEN</div>
-                <div class="momentVal">{{ output.dm.moment_of_instability.when }}</div>
-              </div>
-              <div class="momentRow">
-                <div class="momentKey">WHERE</div>
-                <div class="momentVal">{{ output.dm.moment_of_instability.where }}</div>
-              </div>
-              <div class="momentRow">
-                <div class="momentKey">WHY</div>
-                <div class="momentVal">{{ output.dm.moment_of_instability.why_here_not_elsewhere }}</div>
-              </div>
-            </div>
-          </section>
 
-          <!-- 4) Observed vs Inferred vs Hypothesis -->
-          <section class="briefCard">
-            <div class="sectionTitle">Signals</div>
-            <div class="signalCols">
-              <div class="signalCol">
-                <div class="signalHead">Observed</div>
-                <ul class="bullets tight">
-                  {% for s in output.signals.observed %}
-                    <li>{{ s }}</li>
-                  {% endfor %}
-                  {% if output.signals.observed|length == 0 %}
-                    <li class="muted">None provided</li>
-                  {% endif %}
-                </ul>
-              </div>
+# -----------------------------
+# Routes
+# -----------------------------
+@router.get("/health")
+def health():
+    return {"status": "ok"}
 
-              <div class="signalCol">
-                <div class="signalHead">Inferred</div>
-                <ul class="bullets tight">
-                  {% for s in output.signals.inferred %}
-                    <li>{{ s }}</li>
-                  {% endfor %}
-                  {% if output.signals.inferred|length == 0 %}
-                    <li class="muted">None provided</li>
-                  {% endif %}
-                </ul>
-              </div>
 
-              <div class="signalCol">
-                <div class="signalHead">Hypothesis</div>
-                <ul class="bullets tight">
-                  {% for s in output.signals.hypothesis %}
-                    <li>{{ s }}</li>
-                  {% endfor %}
-                  {% if output.signals.hypothesis|length == 0 %}
-                    <li class="muted">None provided</li>
-                  {% endif %}
-                </ul>
-              </div>
-            </div>
-          </section>
+@router.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "output": None,
+        "error": None,
+        "input_used": None
+    })
 
-          <!-- 5) Planning Implication -->
-          <section class="briefCard">
-            <div class="sectionTitle">Planning implication</div>
-            <div class="planningBlock">
-              <div class="planningLead">What to prioritise</div>
-              <div class="planningText">{{ output.dm.planning_implications.what_to_prioritize }}</div>
 
-              <div class="divider"></div>
+@router.head("/")
+def head_root():
+    return Response(status_code=200)
 
-              <div class="planningLead">What to avoid</div>
-              <div class="planningText">{{ output.dm.planning_implications.what_to_avoid }}</div>
 
-              <div class="divider"></div>
+@router.get("/generate")
+def generate_get():
+    # Users (or bots) sometimes browse /generate directly. The form POSTs here; GET should redirect home.
+    return RedirectResponse(url="/", status_code=303)
 
-              <div class="planningLead">Channel role logic</div>
-              <div class="planningText">{{ output.dm.planning_implications.channel_role_logic }}</div>
-            </div>
-          </section>
 
-          <!-- 6) Confidence -->
-          <section class="briefCard briefFooter">
-            <div class="confLine">
-              <div class="confLeft">
-                <div class="sectionTitle">Confidence</div>
-                <div class="confLevel">{{ output.dm.confidence_assessment.level }}</div>
-              </div>
-              <div class="confRight">
-                <div class="confMeta">
-                  <div class="confMetaKey">Drivers</div>
-                  <div class="confMetaVal">{{ output.dm.confidence_assessment.drivers | join(" • ") }}</div>
-                </div>
-                <div class="confMeta">
-                  <div class="confMetaKey">Limitations</div>
-                  <div class="confMetaVal">{{ output.dm.confidence_assessment.limitations | join(" • ") }}</div>
-                </div>
-              </div>
-            </div>
+@router.get("/template")
+def download_template():
+    content = generate_template_xlsx()
+    return Response(
+        content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=bce_campaign_template.xlsx"}
+    )
 
-            <details class="details">
-              <summary>Show Decision Map JSON (internal)</summary>
-              <pre class="mono small">{{ output.decision_map_json }}</pre>
-            </details>
 
-            <details class="details">
-              <summary>Show input used</summary>
-              <pre class="mono small">{{ input_used }}</pre>
-            </details>
-          </section>
+@router.post("/generate", response_class=HTMLResponse)
+async def generate(
+    request: Request,
 
-        {% else %}
-          <section class="briefEmpty">
-            <div class="emptyTitle">Generate a brief to see output here.</div>
-            <div class="emptySub">This panel becomes the decision artifact. The left panel is just setup.</div>
-          </section>
-        {% endif %}
-      </section>
-    </main>
+    # Core form inputs
+    category: str = Form(default=""),
+    objective: str = Form(default=""),
+    channels: str = Form(default=""),
+    market: str = Form(default=""),
+    flight_dates: str = Form(default=""),
+    audience_logic: str = Form(default=""),
+    creative_notes: str = Form(default=""),
+    measurement_type: str = Form(default=""),
+    key_result: str = Form(default=""),
+    poi_context: str = Form(default=""),
+    notes: str = Form(default=""),
 
-    <footer class="footer">
-      <div class="footerText">Decision hygiene, not generic insights. Built for internal velocity.</div>
-    </footer>
+    # NEW discriminators
+    decision_type: str = Form(default=""),
+    primary_tension: str = Form(default=""),
+    decision_window: str = Form(default=""),
 
-  </div>
-</body>
-</html>
+    # Excel (optional)
+    excel: UploadFile | None = File(default=None),
+):
+    try:
+        # 1) Build campaign input (Excel or manual)
+        if excel and excel.filename:
+            raw = await excel.read()
+            campaign = parse_template_xlsx(raw)
+            source = "excel"
+        else:
+            campaign = {
+                "Category": _required(category, "Category"),
+                "Objective": _required(objective, "Objective"),
+                "Channels": _required(channels, "Channels"),
+                "Market": _required(market, "Market"),
+                "Flight_Dates": (flight_dates or "").strip(),
+                "Audience_Logic": _required(audience_logic, "Audience_Logic"),
+                "Creative_Notes": (creative_notes or "").strip(),
+                "Measurement_Type": (measurement_type or "").strip(),
+                "Key_Result": (key_result or "").strip(),
+                "POI_Context": (poi_context or "").strip(),
+                "Notes": (notes or "").strip(),
+            }
+            source = "manual"
+
+        # 2) Ensure discriminators exist (use provided values, otherwise infer)
+        dt = (decision_type or campaign.get("Decision_Type") or "").strip()
+        pt = (primary_tension or campaign.get("Primary_Tension") or "").strip()
+        dw = (decision_window or campaign.get("Decision_Window") or "").strip()
+
+        if not (dt and pt and dw):
+            inferred_dt, inferred_pt, inferred_dw = _infer_discriminators(campaign)
+            dt = dt or inferred_dt
+            pt = pt or inferred_pt
+            dw = dw or inferred_dw
+
+        campaign["Decision_Type"] = dt
+        campaign["Primary_Tension"] = pt
+        campaign["Decision_Window"] = dw
+
+        input_used = {"source": source, "campaign": campaign}
+
+        campaign_json = json.dumps(campaign, ensure_ascii=False, indent=2)
+
+        # 3) Pass A: Structured decision map
+        pass_a_model = os.getenv("PASS_A_MODEL", "gpt-4o-mini").strip()
+        pass_a_user = PASS_A_USER_TEMPLATE.format(campaign_json=campaign_json)
+
+        decision_map_obj = generate_structured(
+            model=pass_a_model,
+            system_instruction=PASS_A_SYSTEM,
+            user_prompt=pass_a_user,
+            response_model=DecisionMap,
+        )
+        dm = decision_map_obj.model_dump()
+        decision_map_json = json.dumps(dm, ensure_ascii=False, indent=2)
+
+        # 4) Pass B: Narrative (optional but useful for internal sharing)
+        pass_b_model = os.getenv("PASS_B_MODEL", "gpt-4o").strip()
+        pass_b_user = PASS_B_USER_TEMPLATE.format(decision_map_json=decision_map_json)
+
+        brief_text = generate_text(
+            model=pass_b_model,
+            system_instruction=PASS_B_SYSTEM,
+            user_prompt=pass_b_user,
+            decision_map_json=decision_map_json,
+        )
+
+        # 5) Derivations for UI
+        headline, subhead = _derive_headline(dm)
+        signals = _group_signals(dm)
+        why_this_works = _derive_why_this_works(dm)
+
+        return templates.TemplateResponse("index.html", {
+            "request": request,
+            "output": {
+                "brief": brief_text,
+                "decision_map_json": decision_map_json,
+
+                "dm": dm,
+                "headline": headline,
+                "subhead": subhead,
+                "signals": signals,
+                "why_this_works": why_this_works,
+
+                "provider": provider(),
+                "models": {"pass_a": pass_a_model, "pass_b": pass_b_model},
+            },
+            "error": None,
+            "input_used": input_used
+        })
+
+    except Exception as e:
+        return templates.TemplateResponse("index.html", {
+            "request": request,
+            "output": None,
+            "error": _friendly_error(e),
+            "input_used": None
+        })
