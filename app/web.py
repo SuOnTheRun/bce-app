@@ -13,7 +13,10 @@ from app.excel import generate_template_xlsx, parse_template_xlsx
 from app.llm_openai import generate_structured, generate_text
 
 router = APIRouter()
-templates = Jinja2Templates(directory="templates")
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
 def _required(value: str, name: str) -> str:
