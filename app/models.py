@@ -1,28 +1,49 @@
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
-from typing import List, Literal
 
-SignalClassification = Literal["Observed", "Inferred", "Hypothesis"]
-DecisionScope = Literal["pre-trip", "in-moment", "post-experience", "ongoing"]
-ConfidenceLevel = Literal["High", "Medium", "Low"]
+DecisionType = Literal[
+    "Habit reinforcement",
+    "Habit disruption",
+    "Impulse capture",
+    "Planned consideration",
+    "Risk mitigation",
+    "Identity signaling",
+    "Loss avoidance",
+    "Convenience optimization",
+]
 
-class HumanContext(BaseModel):
-    situation: str
-    cognitive_load: str
-    emotional_state: str
+PrimaryTension = Literal[
+    "Time vs Value",
+    "Certainty vs Opportunity",
+    "Effort vs Reward",
+    "Familiarity vs Novelty",
+    "Control vs Convenience",
+    "Identity vs Price",
+]
+
+DecisionWindow = Literal[
+    "In-motion",
+    "Pre-planned",
+    "At-threshold",
+    "Reflective",
+    "Socially triggered",
+    "Environmentally triggered",
+]
 
 class BehavioralTension(BaseModel):
-    tradeoff: str = Field(description='Must be in form "X vs Y".')
-    why_this_tension_exists: str
+    tradeoff: str = Field(..., description="One sentence describing the primary tradeoff in plain English.")
+    why_this_tension_exists: str = Field(..., description="Why this tension is present for this campaign.")
+    what_resolves_it: str = Field(..., description="What must be true for the audience to choose action now.")
 
 class MomentOfInstability(BaseModel):
     when: str
     where: str
     why_here_not_elsewhere: str
 
-class ObservableSignal(BaseModel):
+class Signal(BaseModel):
     signal: str
-    classification: SignalClassification
-    input_dependency: str
+    classification: Literal["Observed", "Inferred", "Hypothesis"]
+    implication: Optional[str] = None
 
 class PlanningImplications(BaseModel):
     what_to_prioritize: str
@@ -30,17 +51,39 @@ class PlanningImplications(BaseModel):
     channel_role_logic: str
 
 class ConfidenceAssessment(BaseModel):
-    level: ConfidenceLevel
+    level: Literal["Low", "Medium", "High"]
     drivers: List[str]
     limitations: List[str]
 
+class RejectedAlternatives(BaseModel):
+    # This is the "cut-throat" part: it must say what it rejected and why.
+    not_decision_types: List[str] = Field(default_factory=list, description="Decision types considered but rejected.")
+    why_not_decision_types: str = Field(..., description="Why those decision types are not dominant here.")
+    not_tensions: List[str] = Field(default_factory=list, description="Tensions considered but rejected.")
+    why_not_tensions: str = Field(..., description="Why those tensions are not primary here.")
+    not_windows: List[str] = Field(default_factory=list, description="Decision windows considered but rejected.")
+    why_not_windows: str = Field(..., description="Why those windows are not dominant here.")
+
 class DecisionMap(BaseModel):
-    decision_being_influenced: str
-    decision_scope: DecisionScope
-    human_context: HumanContext
+    # Core
+    decision_being_influenced: str = Field(..., description="The user decision we are trying to change, in plain English.")
+    human_context: str = Field(..., description="Compressed context in 2–3 sentences. No fluff.")
+    emotional_state: str = Field(..., description="Dominant emotional state driving the choice (e.g., anxious, pragmatic, status-seeking).")
+    cognitive_load: str = Field(..., description="Low/Medium/High with a short reason.")
+
+    # Forcing discriminators
+    decision_type: DecisionType
+    primary_tension: PrimaryTension
+    decision_window: DecisionWindow
+
+    # Now build the rest around them
     behavioral_tension: BehavioralTension
     moment_of_instability: MomentOfInstability
-    observable_signals: List[ObservableSignal]
-    strategic_levers: List[str]
+    observable_signals: List[Signal] = Field(default_factory=list)
+    strategic_levers: List[str] = Field(default_factory=list)
+
     planning_implications: PlanningImplications
     confidence_assessment: ConfidenceAssessment
+
+    # Explicit rejections so outputs don't collapse into the same story
+    rejected_alternatives: RejectedAlternatives
