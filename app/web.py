@@ -1,5 +1,6 @@
 import os
 import json
+from pathlib import Path
 from fastapi import APIRouter, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -10,14 +11,12 @@ from app.prompts import (
     PASS_B_SYSTEM, PASS_B_USER_TEMPLATE
 )
 from app.excel import generate_template_xlsx, parse_template_xlsx
-from app.llm_openai import generate_structured, generate_text
+from app.llm_router import generate_structured, generate_text, provider
 
 router = APIRouter()
-from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-
 
 def _required(value: str, name: str) -> str:
     v = (value or "").strip()
@@ -25,6 +24,15 @@ def _required(value: str, name: str) -> str:
         raise ValueError(f"Missing required field: {name}")
     return v
 
+def _friendly_error(e: Exception) -> str:
+    msg = str(e)
+    if "insufficient_quota" in msg or "You exceeded your current quota" in msg:
+        return (
+            "API quota is not available for the current key.\n\n"
+            "No-pay workaround enabled:\n"
+            "Set LLM_PROVIDER=offline in Render and redeploy.\n"
+        )
+    return msg
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request):
@@ -35,7 +43,6 @@ def home(request: Request):
         "input_used": None
     })
 
-
 @router.get("/template")
 def download_template():
     content = generate_template_xlsx()
@@ -44,7 +51,6 @@ def download_template():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=bce_campaign_template.xlsx"}
     )
-
 
 @router.post("/generate", response_class=HTMLResponse)
 async def generate(
@@ -64,7 +70,6 @@ async def generate(
     excel: UploadFile | None = File(default=None),
 ):
     try:
-        # 1) Build campaign input object either from Excel or form
         if excel and excel.filename:
             raw = await excel.read()
             campaign = parse_template_xlsx(raw)
@@ -87,10 +92,10 @@ async def generate(
 
         campaign_json = json.dumps(campaign, ensure_ascii=False, indent=2)
 
-        # 2) PASS A (Structured reasoning -> Pydantic)
         pass_a_model = os.getenv("PASS_A_MODEL", "gpt-4o-mini").strip()
-        pass_a_user = PASS_A_USER_TEMPLATE.format(campaign_json=campaign_json)
+        pass_b_model = os.getenv("PASS_B_MODEL", "gpt-4o").strip()
 
+        pass_a_user = PASS_A_USER_TEMPLATE.format(campaign_json=campaign_json)
         decision_map = generate_structured(
             model=pass_a_model,
             system_instruction=PASS_A_SYSTEM,
@@ -100,14 +105,12 @@ async def generate(
 
         decision_map_json = decision_map.model_dump_json(indent=2)
 
-        # 3) PASS B (Render BCB)
-        pass_b_model = os.getenv("PASS_B_MODEL", "gpt-4o").strip()
         pass_b_user = PASS_B_USER_TEMPLATE.format(decision_map_json=decision_map_json)
-
         brief_text = generate_text(
             model=pass_b_model,
             system_instruction=PASS_B_SYSTEM,
             user_prompt=pass_b_user,
+            decision_map_json=decision_map_json,
         )
 
         return templates.TemplateResponse("index.html", {
@@ -116,6 +119,8 @@ async def generate(
                 "brief": brief_text,
                 "decision_map_json": decision_map_json,
                 "confidence": decision_map.confidence_assessment.model_dump(),
+                "provider": provider(),
+                "models": {"pass_a": pass_a_model, "pass_b": pass_b_model},
             },
             "error": None,
             "input_used": input_used,
@@ -126,6 +131,6 @@ async def generate(
         return templates.TemplateResponse("index.html", {
             "request": request,
             "output": None,
-            "error": str(e),
+            "error": _friendly_error(e),
             "input_used": None
         })
