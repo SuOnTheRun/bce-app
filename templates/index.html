@@ -7,114 +7,311 @@
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <div class="shell">
-    <header class="top">
-      <div>
-        <div class="title">Behavioral Context Engine</div>
-        <div class="subtitle">Strategy-owned. One-page briefs. Decision-grade clarity.</div>
+  <div class="appShell">
+
+    <!-- Top Bar -->
+    <header class="topBar">
+      <div class="brand">
+        <div class="brandTitle">Behavioral Context Engine</div>
+        <div class="brandSub">Strategy-owned. One-page briefs. Decision-grade clarity.</div>
       </div>
-      <div class="actions">
-        <a class="link" href="/template">Download Excel Template</a>
+
+      <div class="topActions">
+        <a class="btnGhost" href="/template">Download Excel Template</a>
+
+        {% if output and output.provider %}
+          <div class="badge">
+            <span class="dot"></span>
+            <span class="badgeText">Provider: {{ output.provider }}</span>
+          </div>
+        {% endif %}
       </div>
     </header>
 
-    {% if error %}
-      <div class="card error">
-        <div class="cardTitle">Error</div>
-        <div class="mono">{{ error }}</div>
-      </div>
-    {% endif %}
+    <!-- Layout -->
+    <main class="layout">
+      <!-- LEFT: Decision Setup -->
+      <aside class="panel panelLeft">
+        <div class="panelHeader">
+          <div class="panelTitle">Decision Setup</div>
+          <div class="panelHint">Inputs are supporting evidence. The decision is the output.</div>
+        </div>
 
-    <div class="grid">
-      <section class="card">
-        <div class="cardTitle">Inputs</div>
-        <div class="cardSub">Upload Excel, or fill manually. Keep it debranded.</div>
+        {% if error %}
+          <div class="alert alertError">
+            <div class="alertTitle">Error</div>
+            <div class="alertBody mono">{{ error }}</div>
+          </div>
+        {% endif %}
 
         <form action="/generate" method="post" enctype="multipart/form-data" class="form">
-          <label class="label">Excel (optional)</label>
-          <input class="input" type="file" name="excel" accept=".xlsx" />
 
-          <div class="divider"></div>
+          <!-- Campaign Frame -->
+          <section class="card">
+            <div class="cardTop">
+              <div class="cardTitle">Campaign frame</div>
+              <div class="cardSub">Keep it debranded. Short, specific.</div>
+            </div>
 
-          <label class="label">Category *</label>
-          <input class="input" type="text" name="category" placeholder="Retail" />
+            <div class="grid2">
+              <div>
+                <label class="label">Category *</label>
+                <input class="input" type="text" name="category" placeholder="Retail" value="{{ (input_used.campaign.Category if input_used) or '' }}" />
+              </div>
 
-          <label class="label">Objective *</label>
-          <input class="input" type="text" name="objective" placeholder="Drive in-store footfall during promo window" />
+              <div>
+                <label class="label">Market *</label>
+                <input class="input" type="text" name="market" placeholder="US – NYC" value="{{ (input_used.campaign.Market if input_used) or '' }}" />
+              </div>
 
-          <label class="label">Channels *</label>
-          <input class="input" type="text" name="channels" placeholder="DOOH, Display" />
+              <div class="span2">
+                <label class="label">Objective *</label>
+                <input class="input" type="text" name="objective" placeholder="Drive incremental in-store footfall during promo window"
+                       value="{{ (input_used.campaign.Objective if input_used) or '' }}" />
+              </div>
+            </div>
+          </section>
 
-          <label class="label">Market *</label>
-          <input class="input" type="text" name="market" placeholder="US - NYC" />
+          <!-- Behavioral Assumptions (Hero Input) -->
+          <section class="card heroCard">
+            <div class="cardTop">
+              <div class="cardTitle">Behavioral context *</div>
+              <div class="cardSub">Plain English. Describe the decision moment and why it’s unstable.</div>
+            </div>
 
-          <label class="label">Audience Logic *</label>
-          <textarea class="input textarea" name="audience_logic" placeholder="Plain English. No targeting jargon."></textarea>
+            <textarea class="input textarea heroTextarea" name="audience_logic"
+              placeholder="Example: People passing retail locations during routine travel, where detour cost is low and urgency can justify a stop.">{{ (input_used.campaign.Audience_Logic if input_used) or '' }}</textarea>
 
-          <label class="label">Creative Notes</label>
-          <textarea class="input textarea" name="creative_notes" placeholder="What it said, what it looked like. No brand names."></textarea>
+            <div class="microHint">
+              What we’re looking for: <span class="mono">moment + route + tension</span>
+            </div>
+          </section>
 
-          <label class="label">Measurement Type</label>
-          <input class="input" type="text" name="measurement_type" placeholder="Footfall / BLS / Brand Lift" />
+          <!-- Evidence (Collapsible) -->
+          <details class="accordion">
+            <summary class="accordionSummary">
+              <span>Add supporting evidence</span>
+              <span class="accordionHint">Channels, measurement, creative, notes, upload</span>
+            </summary>
 
-          <label class="label">Key Result</label>
-          <input class="input" type="text" name="key_result" placeholder="Directional uplift observed / +X% uplift" />
+            <section class="card">
+              <div class="grid2">
+                <div class="span2">
+                  <label class="label">Excel upload (optional)</label>
+                  <input class="input" type="file" name="excel" accept=".xlsx" />
+                </div>
 
-          <label class="label">POI / Journey Context</label>
-          <input class="input" type="text" name="poi_context" placeholder="Retail parks, transit-adjacent retail, high street..." />
+                <div class="span2">
+                  <label class="label">Channels *</label>
+                  <input class="input" type="text" name="channels" placeholder="DOOH, Display"
+                         value="{{ (input_used.campaign.Channels if input_used) or '' }}" />
+                </div>
 
-          <label class="label">Notes</label>
-          <textarea class="input textarea" name="notes" placeholder="Seasonality, promos, constraints, anomalies."></textarea>
+                <div>
+                  <label class="label">Flight dates</label>
+                  <input class="input" type="text" name="flight_dates" placeholder="2025-10-01 to 2025-10-21"
+                         value="{{ (input_used.campaign.Flight_Dates if input_used) or '' }}" />
+                </div>
 
-          <button class="btn" type="submit">Generate Brief</button>
+                <div>
+                  <label class="label">Measurement type</label>
+                  <input class="input" type="text" name="measurement_type" placeholder="Footfall / BLS / Brand Lift"
+                         value="{{ (input_used.campaign.Measurement_Type if input_used) or '' }}" />
+                </div>
+
+                <div class="span2">
+                  <label class="label">Creative notes</label>
+                  <textarea class="input textarea" name="creative_notes"
+                    placeholder="What it said, what it looked like. No brand names.">{{ (input_used.campaign.Creative_Notes if input_used) or '' }}</textarea>
+                </div>
+
+                <div class="span2">
+                  <label class="label">POI / journey context</label>
+                  <input class="input" type="text" name="poi_context"
+                         placeholder="Transit exits, commuter corridors, retail frontage, last-mile walk zones..."
+                         value="{{ (input_used.campaign.POI_Context if input_used) or '' }}" />
+                </div>
+
+                <div class="span2">
+                  <label class="label">Key result</label>
+                  <input class="input" type="text" name="key_result"
+                         placeholder="Directional uplift observed / +X% uplift"
+                         value="{{ (input_used.campaign.Key_Result if input_used) or '' }}" />
+                </div>
+
+                <div class="span2">
+                  <label class="label">Notes</label>
+                  <textarea class="input textarea" name="notes"
+                    placeholder="Seasonality, anomalies, constraints, competitor events.">{{ (input_used.campaign.Notes if input_used) or '' }}</textarea>
+                </div>
+              </div>
+            </section>
+          </details>
+
+          <button class="btnPrimary" type="submit">Generate Brief</button>
+
+          <div class="tinyMeta">
+            {% if output and output.models %}
+              <span class="mono muted">Models: A={{ output.models.pass_a }}, B={{ output.models.pass_b }}</span>
+            {% endif %}
+          </div>
         </form>
-      </section>
+      </aside>
 
-      <section class="card">
-        <div class="cardTitle">Output</div>
-        <div class="cardSub">Behavioral Context Brief (BCB)</div>
-
-        {% if output %}
-          <div class="outputBlock">
-            <pre class="brief">{{ output.brief }}</pre>
+      <!-- RIGHT: Decision Brief -->
+      <section class="panel panelRight">
+        <div class="panelHeader">
+          <div>
+            <div class="panelTitle">Behavioral Context Brief</div>
+            <div class="panelHint">Designed to be scanned in under 10 seconds.</div>
           </div>
+        </div>
 
-          <div class="divider"></div>
-
-          <div class="meta">
-            <div class="metaRow">
-              <div class="metaKey">Confidence</div>
-              <div class="metaVal mono">{{ output.confidence.level }}</div>
+        {% if output and output.dm %}
+          <!-- 1) Decision Headline -->
+          <section class="briefCard briefHero">
+            <div class="kicker">Executive decision headline</div>
+            <div class="headline">
+              {{ output.headline }}
             </div>
-            <div class="metaRow">
-              <div class="metaKey">Drivers</div>
-              <div class="metaVal mono">{{ output.confidence.drivers }}</div>
+            <div class="subline">
+              {{ output.subhead }}
             </div>
-            <div class="metaRow">
-              <div class="metaKey">Limitations</div>
-              <div class="metaVal mono">{{ output.confidence.limitations }}</div>
+          </section>
+
+          <!-- 2) Why This Works -->
+          <section class="briefCard">
+            <div class="sectionTitle">Why this works</div>
+            <ul class="bullets">
+              {% for b in output.why_this_works %}
+                <li>{{ b }}</li>
+              {% endfor %}
+            </ul>
+          </section>
+
+          <!-- 3) Moment of Influence -->
+          <section class="briefCard">
+            <div class="sectionTitle">Moment of influence</div>
+            <div class="momentGrid">
+              <div class="momentRow">
+                <div class="momentKey">WHEN</div>
+                <div class="momentVal">{{ output.dm.moment_of_instability.when }}</div>
+              </div>
+              <div class="momentRow">
+                <div class="momentKey">WHERE</div>
+                <div class="momentVal">{{ output.dm.moment_of_instability.where }}</div>
+              </div>
+              <div class="momentRow">
+                <div class="momentKey">WHY</div>
+                <div class="momentVal">{{ output.dm.moment_of_instability.why_here_not_elsewhere }}</div>
+              </div>
             </div>
-          </div>
+          </section>
 
-          <details class="details">
-            <summary>Show Decision Map JSON (internal)</summary>
-            <pre class="mono small">{{ output.decision_map_json }}</pre>
-          </details>
+          <!-- 4) Observed vs Inferred vs Hypothesis -->
+          <section class="briefCard">
+            <div class="sectionTitle">Signals</div>
+            <div class="signalCols">
+              <div class="signalCol">
+                <div class="signalHead">Observed</div>
+                <ul class="bullets tight">
+                  {% for s in output.signals.observed %}
+                    <li>{{ s }}</li>
+                  {% endfor %}
+                  {% if output.signals.observed|length == 0 %}
+                    <li class="muted">None provided</li>
+                  {% endif %}
+                </ul>
+              </div>
 
-          <details class="details">
-            <summary>Show input used</summary>
-            <pre class="mono small">{{ input_used }}</pre>
-          </details>
+              <div class="signalCol">
+                <div class="signalHead">Inferred</div>
+                <ul class="bullets tight">
+                  {% for s in output.signals.inferred %}
+                    <li>{{ s }}</li>
+                  {% endfor %}
+                  {% if output.signals.inferred|length == 0 %}
+                    <li class="muted">None provided</li>
+                  {% endif %}
+                </ul>
+              </div>
+
+              <div class="signalCol">
+                <div class="signalHead">Hypothesis</div>
+                <ul class="bullets tight">
+                  {% for s in output.signals.hypothesis %}
+                    <li>{{ s }}</li>
+                  {% endfor %}
+                  {% if output.signals.hypothesis|length == 0 %}
+                    <li class="muted">None provided</li>
+                  {% endif %}
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <!-- 5) Planning Implication -->
+          <section class="briefCard">
+            <div class="sectionTitle">Planning implication</div>
+            <div class="planningBlock">
+              <div class="planningLead">What to prioritise</div>
+              <div class="planningText">{{ output.dm.planning_implications.what_to_prioritize }}</div>
+
+              <div class="divider"></div>
+
+              <div class="planningLead">What to avoid</div>
+              <div class="planningText">{{ output.dm.planning_implications.what_to_avoid }}</div>
+
+              <div class="divider"></div>
+
+              <div class="planningLead">Channel role logic</div>
+              <div class="planningText">{{ output.dm.planning_implications.channel_role_logic }}</div>
+            </div>
+          </section>
+
+          <!-- 6) Confidence -->
+          <section class="briefCard briefFooter">
+            <div class="confLine">
+              <div class="confLeft">
+                <div class="sectionTitle">Confidence</div>
+                <div class="confLevel">{{ output.dm.confidence_assessment.level }}</div>
+              </div>
+              <div class="confRight">
+                <div class="confMeta">
+                  <div class="confMetaKey">Drivers</div>
+                  <div class="confMetaVal">{{ output.dm.confidence_assessment.drivers | join(" • ") }}</div>
+                </div>
+                <div class="confMeta">
+                  <div class="confMetaKey">Limitations</div>
+                  <div class="confMetaVal">{{ output.dm.confidence_assessment.limitations | join(" • ") }}</div>
+                </div>
+              </div>
+            </div>
+
+            <details class="details">
+              <summary>Show Decision Map JSON (internal)</summary>
+              <pre class="mono small">{{ output.decision_map_json }}</pre>
+            </details>
+
+            <details class="details">
+              <summary>Show input used</summary>
+              <pre class="mono small">{{ input_used }}</pre>
+            </details>
+          </section>
 
         {% else %}
-          <div class="empty">Generate a brief to see output here.</div>
+          <section class="briefEmpty">
+            <div class="emptyTitle">Generate a brief to see output here.</div>
+            <div class="emptySub">This panel becomes the decision artifact. The left panel is just setup.</div>
+          </section>
         {% endif %}
       </section>
-    </div>
+    </main>
 
     <footer class="footer">
-      <div class="muted">Strategy-grade briefing. Minimal UI. Maximum clarity.</div>
+      <div class="footerText">Decision hygiene, not generic insights. Built for internal velocity.</div>
     </footer>
+
   </div>
 </body>
 </html>
