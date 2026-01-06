@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from fastapi import APIRouter, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.models import DecisionMap
@@ -103,6 +104,11 @@ def _derive_why_this_works(dm: dict) -> list[str]:
 @router.get("/health")
 def health():
     return {"status": "ok"}
+
+@router.get("/generate")
+def generate_get():
+    # If someone hits /generate in the browser, send them home.
+    return RedirectResponse(url="/", status_code=303)
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request):
