@@ -10,16 +10,18 @@ from app.prompts import (
     PASS_B_SYSTEM, PASS_B_USER_TEMPLATE
 )
 from app.excel import generate_template_xlsx, parse_template_xlsx
-from app.llm_gemini import generate_structured_json, generate_text
+from app.llm_openai import generate_structured, generate_text
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
+
 
 def _required(value: str, name: str) -> str:
     v = (value or "").strip()
     if not v:
         raise ValueError(f"Missing required field: {name}")
     return v
+
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request):
@@ -30,6 +32,7 @@ def home(request: Request):
         "input_used": None
     })
 
+
 @router.get("/template")
 def download_template():
     content = generate_template_xlsx()
@@ -38,6 +41,7 @@ def download_template():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=bce_campaign_template.xlsx"}
     )
+
 
 @router.post("/generate", response_class=HTMLResponse)
 async def generate(
@@ -80,22 +84,21 @@ async def generate(
 
         campaign_json = json.dumps(campaign, ensure_ascii=False, indent=2)
 
-        # 2) PASS A (Structured reasoning)
-        pass_a_model = os.getenv("PASS_A_MODEL", "gemini-2.0-flash").strip()
+        # 2) PASS A (Structured reasoning -> Pydantic)
+        pass_a_model = os.getenv("PASS_A_MODEL", "gpt-4o-mini").strip()
         pass_a_user = PASS_A_USER_TEMPLATE.format(campaign_json=campaign_json)
 
-        schema = DecisionMap.model_json_schema()
-        decision_map_dict = generate_structured_json(
+        decision_map = generate_structured(
             model=pass_a_model,
             system_instruction=PASS_A_SYSTEM,
             user_prompt=pass_a_user,
-            response_schema=schema,
+            response_model=DecisionMap,
         )
-        decision_map = DecisionMap.model_validate(decision_map_dict)
+
         decision_map_json = decision_map.model_dump_json(indent=2)
 
         # 3) PASS B (Render BCB)
-        pass_b_model = os.getenv("PASS_B_MODEL", "gemini-2.0-flash").strip()
+        pass_b_model = os.getenv("PASS_B_MODEL", "gpt-4o").strip()
         pass_b_user = PASS_B_USER_TEMPLATE.format(decision_map_json=decision_map_json)
 
         brief_text = generate_text(
