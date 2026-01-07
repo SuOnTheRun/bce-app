@@ -1,349 +1,421 @@
-import os
-import json
-from pathlib import Path
-from typing import Tuple
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Behavioral Context Engine</title>
 
-from fastapi import APIRouter, Request, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, Response, RedirectResponse
-from fastapi.templating import Jinja2Templates
+  <style>
+    :root{
+      --bg:#07090c;
+      --panel:#0c1016;
+      --panel2:#0a0d12;
+      --border:rgba(255,255,255,.08);
+      --text:rgba(255,255,255,.92);
+      --muted:rgba(255,255,255,.62);
+      --faint:rgba(255,255,255,.45);
+      --accent:rgba(255,255,255,.12);
+      --btn:rgba(255,255,255,.06);
+      --btn2:rgba(255,255,255,.10);
+      --good:#6ee7b7;
+      --bad:#fb7185;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      background: radial-gradient(1200px 600px at 30% -10%, rgba(255,255,255,.06), transparent 60%),
+                  radial-gradient(900px 500px at 80% 10%, rgba(255,255,255,.04), transparent 55%),
+                  var(--bg);
+      color:var(--text);
+    }
+    a{color:inherit}
+    .wrap{
+      max-width:1200px;
+      margin:0 auto;
+      padding:28px 18px 42px;
+    }
+    .topbar{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:14px;
+      margin-bottom:18px;
+    }
+    .title{
+      font-size:28px;
+      letter-spacing:.2px;
+      margin:0;
+      line-height:1.15;
+    }
+    .subtitle{
+      margin-top:6px;
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.4;
+    }
+    .actions{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .btn{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:10px 12px;
+      border:1px solid var(--border);
+      background:linear-gradient(to bottom, rgba(255,255,255,.06), rgba(255,255,255,.03));
+      color:var(--text);
+      border-radius:12px;
+      font-size:13px;
+      text-decoration:none;
+      cursor:pointer;
+      user-select:none;
+      transition:transform .05s ease, background .15s ease;
+      white-space:nowrap;
+    }
+    .btn:hover{background:linear-gradient(to bottom, rgba(255,255,255,.09), rgba(255,255,255,.04))}
+    .btn:active{transform:translateY(1px)}
+    .btn.primary{
+      background:linear-gradient(to bottom, rgba(255,255,255,.12), rgba(255,255,255,.06));
+      border-color:rgba(255,255,255,.16);
+    }
 
-from app.models import DecisionMap
-from app.excel import generate_template_xlsx, parse_template_xlsx
-from app.llm_router import generate_structured, generate_text, provider
-from app.prompts import (
-    PASS_A_SYSTEM, PASS_A_USER_TEMPLATE,
-    PASS_B_SYSTEM, PASS_B_USER_TEMPLATE
-)
+    .grid{
+      display:grid;
+      grid-template-columns: 1fr 1.25fr;
+      gap:18px;
+      align-items:start;
+    }
+    @media(max-width: 980px){
+      .grid{grid-template-columns:1fr}
+    }
 
-router = APIRouter()
+    .card{
+      background: linear-gradient(to bottom, rgba(255,255,255,.05), rgba(255,255,255,.02));
+      border:1px solid var(--border);
+      border-radius:16px;
+      padding:16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+    .sectionTitle{
+      font-size:12px;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+      color:var(--muted);
+      margin:0 0 10px;
+    }
 
+    label.label{
+      display:block;
+      font-size:12px;
+      color:var(--muted);
+      margin:12px 0 6px;
+    }
+    .input, textarea, select{
+      width:100%;
+      border:1px solid var(--border);
+      background:rgba(0,0,0,.20);
+      color:var(--text);
+      border-radius:12px;
+      padding:10px 12px;
+      font-size:14px;
+      outline:none;
+    }
+    textarea{min-height:76px; resize:vertical}
+    .input:focus, textarea:focus, select:focus{
+      border-color:rgba(255,255,255,.18);
+      box-shadow:0 0 0 3px rgba(255,255,255,.05);
+    }
 
-# -----------------------------
-# Helpers
-# -----------------------------
-def _required(value: str, name: str) -> str:
-    v = (value or "").strip()
-    if not v:
-        raise ValueError(f"Missing required field: {name}")
-    return v
+    .row2{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:12px;
+    }
+    @media(max-width: 520px){
+      .row2{grid-template-columns:1fr}
+    }
 
+    .divider{
+      height:1px;
+      background:var(--border);
+      margin:14px 0;
+    }
 
-def _friendly_error(e: Exception) -> str:
-    msg = str(e)
-    if "insufficient_quota" in msg or "You exceeded your current quota" in msg:
-        return (
-            "LLM quota is not available for the current API key.\n\n"
-            "No-pay workaround:\n"
-            "- Set LLM_PROVIDER=offline in Render.\n"
-            "- Or switch provider to a free/approved internal option.\n"
-        )
-    if "OPENAI_API_KEY is not set" in msg or "GEMINI_API_KEY is not set" in msg:
-        return (
-            "API key missing.\n\n"
-            "No-pay workaround:\n"
-            "- Set LLM_PROVIDER=offline in Render.\n"
-        )
-    return msg
+    .errorBox{
+      border:1px solid rgba(251,113,133,.35);
+      background:rgba(251,113,133,.08);
+      color:rgba(255,255,255,.9);
+      padding:12px;
+      border-radius:14px;
+      font-size:13px;
+      white-space:pre-wrap;
+      margin-bottom:14px;
+    }
 
+    .outputTitle{
+      font-size:16px;
+      margin:0 0 10px;
+      letter-spacing:.2px;
+    }
+    .mono{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
+      font-size:13px;
+      line-height:1.55;
+      white-space:pre-wrap;
+      word-wrap:break-word;
+      color:rgba(255,255,255,.88);
+    }
 
-def _group_signals(dm: dict) -> dict:
-    observed, inferred, hypothesis = [], [], []
-    for s in dm.get("observable_signals", []) or []:
-        txt = (s.get("signal") or "").strip()
-        cls = (s.get("classification") or "").strip().lower()
-        if not txt:
-            continue
-        if cls == "observed":
-            observed.append(txt)
-        elif cls == "hypothesis":
-            hypothesis.append(txt)
-        else:
-            inferred.append(txt)
-    return {"observed": observed, "inferred": inferred, "hypothesis": hypothesis}
+    .pill{
+      display:inline-flex;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background:rgba(255,255,255,.04);
+      font-size:12px;
+      color:var(--muted);
+      margin-right:6px;
+      margin-top:6px;
+    }
 
+    details{
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:10px 12px;
+      background:rgba(0,0,0,.18);
+      margin-top:12px;
+    }
+    summary{
+      cursor:pointer;
+      color:var(--muted);
+      font-size:13px;
+      user-select:none;
+    }
+    .smallMuted{
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.45;
+    }
+    .hr{
+      border:none;
+      height:1px;
+      background:var(--border);
+      margin:12px 0;
+    }
 
-def _derive_headline(dm: dict) -> Tuple[str, str]:
-    decision = (dm.get("decision_being_influenced") or "").strip()
-    tension = (dm.get("behavioral_tension", {}) or {}).get("tradeoff", "")
-    why = (dm.get("behavioral_tension", {}) or {}).get("why_this_tension_exists", "")
+    .footerNote{
+      margin-top:10px;
+      color:var(--faint);
+      font-size:12px;
+    }
+  </style>
+</head>
 
-    headline = decision if decision else "A decision becomes influenceable when friction collapses and justification becomes credible."
-    sub = []
-    if dm.get("decision_type"):
-        sub.append(f"Decision type: {dm.get('decision_type')}.")
-    if dm.get("primary_tension"):
-        sub.append(f"Tension: {dm.get('primary_tension')}.")
-    if dm.get("decision_window"):
-        sub.append(f"Window: {dm.get('decision_window')}.")
-    if tension:
-        sub.append(f"Tradeoff: {tension}.")
-    if why:
-        sub.append(why)
-    return headline, " ".join(sub).strip()
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <h1 class="title">Behavioral Context Engine</h1>
+        <div class="subtitle">Strategy-owned. One-page briefs. Decision-grade clarity.</div>
+      </div>
 
+      <div class="actions">
+        <a class="btn" href="/library">Case Library</a>
+        <a class="btn" href="/template">Download Excel Template</a>
+      </div>
+    </div>
 
-def _derive_why_this_works(dm: dict) -> list[str]:
-    # Prefer strategic levers if present; otherwise craft differentiated bullets.
-    levers = dm.get("strategic_levers") or []
-    bullets = [x.strip() for x in levers if isinstance(x, str) and x.strip()]
+    <div class="grid">
+      <!-- LEFT: INPUTS -->
+      <div class="card">
+        <div class="sectionTitle">Inputs</div>
 
-    if len(bullets) >= 3:
-        return bullets[:3]
+        {% if error %}
+          <div class="errorBox">{{ error }}</div>
+        {% endif %}
 
-    # Fallback bullets depend on discriminators (this helps differentiation even in offline/provider-limited mode)
-    dt = (dm.get("decision_type") or "").lower()
-    pt = (dm.get("primary_tension") or "").lower()
-    dw = (dm.get("decision_window") or "").lower()
+        <form method="post" action="/generate" enctype="multipart/form-data">
 
-    fallback = []
-    if "habit" in dt:
-        fallback.append("This works when cues repeat at the same weekly rhythm and reduce choice effort into a default.")
-    if "impulse" in dt:
-        fallback.append("This works when the message is simple enough to be processed fast and feels like a low-cost win now.")
-    if "risk" in dt:
-        fallback.append("This works when the downside is reduced through reassurance, proof, and clear next steps.")
-    if "planned" in dt:
-        fallback.append("This works when the audience is supported through evaluation, not rushed into action.")
-    if "identity" in dt:
-        fallback.append("This works when the offer feels like self-expression and has social permission to spend.")
-    if "loss" in dt:
-        fallback.append("This works when urgency is framed as avoiding loss, not chasing a benefit.")
-    if "convenience" in dt:
-        fallback.append("This works when friction is removed and the ‘easy path’ is made obvious.")
+          <label class="label">Excel (optional)</label>
+          <input class="input" type="file" name="excel" accept=".xlsx"/>
 
-    # tension cues
-    if "time vs value" in pt:
-        fallback.append("The creative must justify time spent with immediate value and near-zero hassle.")
-    if "certainty vs opportunity" in pt:
-        fallback.append("The message must increase certainty (proof, clarity) while keeping the upside simple.")
-    if "identity vs price" in pt:
-        fallback.append("The offer must feel worth it even if not the cheapest, because it signals taste or status.")
-    if "effort vs reward" in pt:
-        fallback.append("The action must feel effortless relative to the payoff; otherwise drop-off is guaranteed.")
+          <div class="divider"></div>
 
-    # window cue
-    if "in-motion" in dw:
-        fallback.append("In-motion moments require short, high-contrast messaging and route-adjacent placements.")
-    if "reflective" in dw:
-        fallback.append("Reflective moments require reassurance and structure, not urgency.")
-    if "pre-planned" in dw:
-        fallback.append("Pre-planned moments require reminders and planning cues rather than surprise.")
-    if "at-threshold" in dw:
-        fallback.append("At-threshold moments require immediate relevance and unmistakable ‘go-now’ justification.")
+          <label class="label">Category *</label>
+          <input class="input" name="category" placeholder="Retail" value=""/>
 
-    # dedupe + cap at 3
-    seen, out = set(), []
-    for b in fallback:
-        if b not in seen:
-            out.append(b)
-            seen.add(b)
-    return out[:3] if out else ["The brief is strongest when the moment, tension, and decision window are explicitly defined."]
+          <label class="label">Objective *</label>
+          <input class="input" name="objective" placeholder="Drive in-store footfall during promo window" value=""/>
 
+          <label class="label">Channels *</label>
+          <input class="input" name="channels" placeholder="DOOH, Display" value=""/>
 
-def _infer_discriminators(campaign: dict) -> Tuple[str, str, str]:
-    """
-    If user doesn't supply decision_type / primary_tension / decision_window,
-    infer a reasonable default so the engine still diverges.
-    """
-    cat = (campaign.get("Category") or "").lower()
-    obj = (campaign.get("Objective") or "").lower()
-    ch = (campaign.get("Channels") or "").lower()
+          <label class="label">Market *</label>
+          <input class="input" name="market" placeholder="US – NYC" value=""/>
 
-    # Decision Window
-    if "dooh" in ch:
-        window = "At-threshold"
-    elif "ctv" in ch:
-        window = "Reflective"
-    else:
-        window = "Pre-planned"
+          <div class="row2">
+            <div>
+              <label class="label">Flight Dates</label>
+              <input class="input" name="flight_dates" placeholder="Jan 15 – Feb 10" value=""/>
+            </div>
+            <div>
+              <label class="label">Measurement Type</label>
+              <input class="input" name="measurement_type" placeholder="Footfall / BLS / Brand Lift" value=""/>
+            </div>
+          </div>
 
-    # Decision Type
-    if any(x in obj for x in ["test drive", "dealership", "consider", "compare", "apply", "sign up"]):
-        decision_type = "Planned consideration"
-    elif any(x in obj for x in ["reduce risk", "trust", "reassure"]):
-        decision_type = "Risk mitigation"
-    elif any(x in obj for x in ["footfall", "visit", "store", "walk-in", "lunch"]):
-        decision_type = "Impulse capture"
-    elif any(x in obj for x in ["repeat", "frequency", "weekly", "habit", "subscription"]):
-        decision_type = "Habit reinforcement"
-    elif "beauty" in cat or "luxury" in cat:
-        decision_type = "Identity signaling"
-    else:
-        decision_type = "Convenience optimization"
+          <label class="label">Audience Logic *</label>
+          <textarea name="audience_logic" class="input" placeholder="Plain English. No targeting jargon."></textarea>
 
-    # Primary Tension
-    if decision_type in ["Impulse capture", "Convenience optimization"]:
-        tension = "Time vs Value"
-    elif decision_type in ["Planned consideration", "Risk mitigation"]:
-        tension = "Certainty vs Opportunity"
-    elif decision_type == "Identity signaling":
-        tension = "Identity vs Price"
-    else:
-        tension = "Effort vs Reward"
+          <label class="label">Creative Notes</label>
+          <textarea name="creative_notes" class="input" placeholder="What it said, what it looked like. Keep debranded."></textarea>
 
-    return decision_type, tension, window
+          <div class="row2">
+            <div>
+              <label class="label">Key Result</label>
+              <input class="input" name="key_result" placeholder="Store visits / lift / CPA target" value=""/>
+            </div>
+            <div>
+              <label class="label">POI Context</label>
+              <input class="input" name="poi_context" placeholder="Transit-adjacent stores, malls, high-street etc." value=""/>
+            </div>
+          </div>
 
+          <label class="label">Notes</label>
+          <textarea name="notes" class="input" placeholder="Any caveats, constraints, or internal context."></textarea>
 
-# -----------------------------
-# Routes
-# -----------------------------
-@router.get("/health")
-def health():
-    return {"status": "ok"}
+          <div class="divider"></div>
 
+          <div class="smallMuted">Optional discriminators (if blank, engine will infer):</div>
 
-@router.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "output": None,
-        "error": None,
-        "input_used": None
-    })
+          <label class="label">Decision Type</label>
+          <input class="input" name="decision_type" placeholder="Impulse capture / Planned consideration / Risk mitigation / Habit reinforcement / Identity signaling" value=""/>
 
+          <label class="label">Primary Tension</label>
+          <input class="input" name="primary_tension" placeholder="Time vs Value / Certainty vs Opportunity / Effort vs Reward / Identity vs Price" value=""/>
 
-@router.head("/")
-def head_root():
-    return Response(status_code=200)
+          <label class="label">Decision Window</label>
+          <input class="input" name="decision_window" placeholder="At-threshold / Reflective / Pre-planned" value=""/>
 
+          <div style="margin-top:14px;">
+            <button class="btn primary" type="submit">Generate Brief</button>
+          </div>
 
-@router.get("/generate")
-def generate_get():
-    # Users (or bots) sometimes browse /generate directly. The form POSTs here; GET should redirect home.
-    return RedirectResponse(url="/", status_code=303)
+          <div class="footerNote">
+            Keep inputs debranded. If LLM provider is offline, output uses internal fallback logic.
+          </div>
+        </form>
+      </div>
 
+      <!-- RIGHT: OUTPUT -->
+      <div class="card">
+        <div class="sectionTitle">Output</div>
 
-@router.get("/template")
-def download_template():
-    content = generate_template_xlsx()
-    return Response(
-        content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=bce_campaign_template.xlsx"}
-    )
+        {% if output %}
+          <h2 class="outputTitle">Behavioral Context Brief (BCB)</h2>
 
+          {% if output.case_id %}
+            <div class="smallMuted">Saved as <strong>Case #{{ output.case_id }}</strong></div>
+          {% endif %}
 
-@router.post("/generate", response_class=HTMLResponse)
-async def generate(
-    request: Request,
+          {% if output.headline %}
+            <div style="margin-top:10px;">
+              <div class="mono"><strong>Executive Decision Headline</strong>
+{{ output.headline }}</div>
+              {% if output.subhead %}
+                <div class="smallMuted" style="margin-top:6px;">{{ output.subhead }}</div>
+              {% endif %}
+            </div>
+            <div class="hr"></div>
+          {% endif %}
 
-    # Core form inputs
-    category: str = Form(default=""),
-    objective: str = Form(default=""),
-    channels: str = Form(default=""),
-    market: str = Form(default=""),
-    flight_dates: str = Form(default=""),
-    audience_logic: str = Form(default=""),
-    creative_notes: str = Form(default=""),
-    measurement_type: str = Form(default=""),
-    key_result: str = Form(default=""),
-    poi_context: str = Form(default=""),
-    notes: str = Form(default=""),
+          {% if output.dm %}
+            <div style="margin-bottom:10px;">
+              <span class="pill">Confidence: {{ output.dm.confidence_level or "Medium" }}</span>
+              {% if output.provider %}
+                <span class="pill">Provider: {{ output.provider }}</span>
+              {% endif %}
+              {% if output.models and output.models.pass_a %}
+                <span class="pill">A: {{ output.models.pass_a }}</span>
+              {% endif %}
+              {% if output.models and output.models.pass_b %}
+                <span class="pill">B: {{ output.models.pass_b }}</span>
+              {% endif %}
+            </div>
+          {% endif %}
 
-    # NEW discriminators
-    decision_type: str = Form(default=""),
-    primary_tension: str = Form(default=""),
-    decision_window: str = Form(default=""),
+          {% if output.brief %}
+            <div class="mono">{{ output.brief }}</div>
+          {% endif %}
 
-    # Excel (optional)
-    excel: UploadFile | None = File(default=None),
-):
-    try:
-        # 1) Build campaign input (Excel or manual)
-        if excel and excel.filename:
-            raw = await excel.read()
-            campaign = parse_template_xlsx(raw)
-            source = "excel"
-        else:
-            campaign = {
-                "Category": _required(category, "Category"),
-                "Objective": _required(objective, "Objective"),
-                "Channels": _required(channels, "Channels"),
-                "Market": _required(market, "Market"),
-                "Flight_Dates": (flight_dates or "").strip(),
-                "Audience_Logic": _required(audience_logic, "Audience_Logic"),
-                "Creative_Notes": (creative_notes or "").strip(),
-                "Measurement_Type": (measurement_type or "").strip(),
-                "Key_Result": (key_result or "").strip(),
-                "POI_Context": (poi_context or "").strip(),
-                "Notes": (notes or "").strip(),
-            }
-            source = "manual"
+          {% if output.signals %}
+            <div class="hr"></div>
+            <div class="mono"><strong>Signals</strong></div>
+            {% if output.signals.observed %}
+              <div class="smallMuted" style="margin-top:6px;"><strong>Observed</strong></div>
+              <div class="mono">- {{ output.signals.observed|join('\n- ') }}</div>
+            {% endif %}
+            {% if output.signals.inferred %}
+              <div class="smallMuted" style="margin-top:10px;"><strong>Inferred</strong></div>
+              <div class="mono">- {{ output.signals.inferred|join('\n- ') }}</div>
+            {% endif %}
+            {% if output.signals.hypothesis %}
+              <div class="smallMuted" style="margin-top:10px;"><strong>Hypothesis</strong></div>
+              <div class="mono">- {{ output.signals.hypothesis|join('\n- ') }}</div>
+            {% endif %}
+          {% endif %}
 
-        # 2) Ensure discriminators exist (use provided values, otherwise infer)
-        dt = (decision_type or campaign.get("Decision_Type") or "").strip()
-        pt = (primary_tension or campaign.get("Primary_Tension") or "").strip()
-        dw = (decision_window or campaign.get("Decision_Window") or "").strip()
+          {% if output.why_this_works %}
+            <div class="hr"></div>
+            <div class="mono"><strong>Why this works</strong></div>
+            <div class="mono">- {{ output.why_this_works|join('\n- ') }}</div>
+          {% endif %}
 
-        if not (dt and pt and dw):
-            inferred_dt, inferred_pt, inferred_dw = _infer_discriminators(campaign)
-            dt = dt or inferred_dt
-            pt = pt or inferred_pt
-            dw = dw or inferred_dw
+          {% if output.similar_cases %}
+            <div class="hr"></div>
+            <div class="mono"><strong>Similar Cases</strong></div>
+            <div class="smallMuted">Pulled from your internal library. This is the compounding edge.</div>
+            <div style="margin-top:10px;">
+              {% for sc in output.similar_cases %}
+                <div style="padding: 10px 0;">
+                  <div>
+                    <strong><a href="/library/{{ sc.id }}">Case #{{ sc.id }}</a></strong>
+                    <span class="smallMuted"> • score {{ sc.similarity_score }}</span>
+                  </div>
+                  <div class="smallMuted">{{ sc.category }} • {{ sc.market }} • {{ sc.channels }}</div>
+                  <div style="margin-top:6px;">
+                    {% for r in sc.match_reasons %}
+                      <span class="pill">{{ r }}</span>
+                    {% endfor %}
+                  </div>
+                </div>
+                <hr class="hr"/>
+              {% endfor %}
+            </div>
+          {% endif %}
 
-        campaign["Decision_Type"] = dt
-        campaign["Primary_Tension"] = pt
-        campaign["Decision_Window"] = dw
+          <details>
+            <summary>Show Decision Map JSON (internal)</summary>
+            <div class="mono" style="margin-top:10px;">{{ output.decision_map_json }}</div>
+          </details>
 
-        input_used = {"source": source, "campaign": campaign}
+          {% if input_used %}
+            <details>
+              <summary>Show input used</summary>
+              <div class="mono" style="margin-top:10px;">{{ input_used | tojson(indent=2) }}</div>
+            </details>
+          {% endif %}
 
-        campaign_json = json.dumps(campaign, ensure_ascii=False, indent=2)
-
-        # 3) Pass A: Structured decision map
-        pass_a_model = os.getenv("PASS_A_MODEL", "gpt-4o-mini").strip()
-        pass_a_user = PASS_A_USER_TEMPLATE.format(campaign_json=campaign_json)
-
-        decision_map_obj = generate_structured(
-            model=pass_a_model,
-            system_instruction=PASS_A_SYSTEM,
-            user_prompt=pass_a_user,
-            response_model=DecisionMap,
-        )
-        dm = decision_map_obj.model_dump()
-        decision_map_json = json.dumps(dm, ensure_ascii=False, indent=2)
-
-        # 4) Pass B: Narrative (optional but useful for internal sharing)
-        pass_b_model = os.getenv("PASS_B_MODEL", "gpt-4o").strip()
-        pass_b_user = PASS_B_USER_TEMPLATE.format(decision_map_json=decision_map_json)
-
-        brief_text = generate_text(
-            model=pass_b_model,
-            system_instruction=PASS_B_SYSTEM,
-            user_prompt=pass_b_user,
-            decision_map_json=decision_map_json,
-        )
-
-        # 5) Derivations for UI
-        headline, subhead = _derive_headline(dm)
-        signals = _group_signals(dm)
-        why_this_works = _derive_why_this_works(dm)
-
-        return templates.TemplateResponse("index.html", {
-            "request": request,
-            "output": {
-                "brief": brief_text,
-                "decision_map_json": decision_map_json,
-
-                "dm": dm,
-                "headline": headline,
-                "subhead": subhead,
-                "signals": signals,
-                "why_this_works": why_this_works,
-
-                "provider": provider(),
-                "models": {"pass_a": pass_a_model, "pass_b": pass_b_model},
-            },
-            "error": None,
-            "input_used": input_used
-        })
-
-    except Exception as e:
-        return templates.TemplateResponse("index.html", {
-            "request": request,
-            "output": None,
-            "error": _friendly_error(e),
-            "input_used": None
-        })
+        {% else %}
+          <div class="mono">Generate a brief to see output here.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</body>
+</html>
