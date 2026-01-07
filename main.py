@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from app.web import router as web_router
 
+
 app = FastAPI(title="Behavioral Context Engine", version="1.0")
 
 from pathlib import Path
