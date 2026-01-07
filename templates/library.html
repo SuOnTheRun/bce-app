@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>BCE Case Library</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <h1 class="title">Case Library</h1>
+        <div class="subtitle">Institutional memory. Searchable. Reusable.</div>
+      </div>
+      <div class="actions">
+        <a class="btn" href="/">Back to Engine</a>
+        <a class="btn" href="/library/export/db">Export DB</a>
+        <a class="btn" href="/library/export/jsonl">Export JSONL</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <form method="get" action="/library" class="grid2">
+        <div>
+          <label class="label">Search</label>
+          <input class="input" name="q" placeholder="objective, channels, brief text…" value="{{ q or '' }}">
+        </div>
+        <div>
+          <label class="label">Category</label>
+          <input class="input" name="category" placeholder="Retail" value="{{ category or '' }}">
+        </div>
+        <div>
+          <label class="label">Market</label>
+          <input class="input" name="market" placeholder="US – NYC" value="{{ market or '' }}">
+        </div>
+        <div>
+          <label class="label">Decision type</label>
+          <input class="input" name="decision_type" placeholder="Impulse capture" value="{{ decision_type or '' }}">
+        </div>
+        <div class="span2">
+          <button class="btn primary" type="submit">Search</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="subtitle">{{ total }} cases</div>
+      <div style="margin-top: 12px;">
+        {% for c in cases %}
+          <div class="caseRow">
+            <div class="caseMeta">
+              <div class="caseTitle">
+                <a href="/library/{{ c.id }}">Case #{{ c.id }}</a>
+                <span class="muted"> • {{ c.created_at }}</span>
+              </div>
+              <div class="muted">
+                {{ c.category }} • {{ c.market }} • {{ c.channels }}
+              </div>
+              <div style="margin-top:6px;">
+                <span class="pill">{{ c.decision_type }}</span>
+                <span class="pill">{{ c.primary_tension }}</span>
+                <span class="pill">{{ c.decision_window }}</span>
+              </div>
+              <div style="margin-top:8px;">
+                <strong>Objective:</strong> {{ c.objective }}
+              </div>
+            </div>
+          </div>
+          <hr class="hr"/>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="h2">Import JSONL</h2>
+      <div class="subtitle">Paste exported JSONL here to restore or merge the library.</div>
+      <form method="post" action="/library/import/jsonl">
+        <textarea class="input" name="jsonl" style="height: 180px;" placeholder="Paste JSONL…"></textarea>
+        <div style="margin-top:10px;">
+          <button class="btn primary" type="submit">Import</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</body>
+</html>
